@@ -2,8 +2,7 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 
-class SpectrumAnalyzerAudioProcessorEditor : public juce::AudioProcessorEditor,
-    private juce::Timer
+class SpectrumAnalyzerAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
     explicit SpectrumAnalyzerAudioProcessorEditor(SpectrumAnalyzerAudioProcessor&);
@@ -16,40 +15,26 @@ private:
     void timerCallback() override;
 
     // Helpers de dibujo — separan responsabilidades en paint()
-    void drawSpectrumCurve(juce::Graphics& g, float* scope,
-        juce::Rectangle<float> area,
-        juce::Colour colour, bool filled);
-    void drawThresholdLine(juce::Graphics& g, juce::Rectangle<float> area);
-    void drawFrequencyGrid(juce::Graphics& g, juce::Rectangle<float> area);
-    void drawVUMeter(juce::Graphics& g, juce::Rectangle<int>   area);
-    void drawGRMeter(juce::Graphics& g, juce::Rectangle<int>   area);
+    void drawTimeWaveform(juce::Graphics& g, juce::Rectangle<float> area);
+    void drawTimeGrid(juce::Graphics& g, juce::Rectangle<float> area);
+    void drawVUMeter(juce::Graphics& g, juce::Rectangle<int> area);
+    void drawGRMeter(juce::Graphics& g, juce::Rectangle<int> area);
 
     SpectrumAnalyzerAudioProcessor& audioProcessor;
 
-    // -----------------------------------------------------------------
-    //  Controles del Limiter
-    // -----------------------------------------------------------------
-    juce::Slider thresholdSlider, releaseSlider, outputGainSlider;
-    juce::Label  thresholdLabel, releaseLabel, outputGainLabel;
+    // Controles
+    juce::Slider thresholdSlider, releaseSlider, outputGainSlider, ceilingSlider;
+    juce::Label  thresholdLabel, releaseLabel, outputGainLabel, ceilingLabel;
 
-    // Los Attachments vinculan slider <-> parámetro APVTS de forma automática
-    // y bidireccional. Deben declararse DESPUÉS de los sliders.
+    // Attachments
     juce::AudioProcessorValueTreeState::SliderAttachment thresholdAttach;
     juce::AudioProcessorValueTreeState::SliderAttachment releaseAttach;
     juce::AudioProcessorValueTreeState::SliderAttachment outputGainAttach;
+    juce::AudioProcessorValueTreeState::SliderAttachment ceilingAttach;
 
     juce::TextButton freezeButton{ "FREEZE" };
 
-    // -----------------------------------------------------------------
-    //  Datos del espectro (procesados en timerCallback, dibujados en paint)
-    // -----------------------------------------------------------------
-    static constexpr int scopeSize = 512;
-    float scopeData[scopeSize]{}; // Pre-limiter  (cyan)
-    float scopeDataPost[scopeSize]{}; // Post-limiter (verde)
-
-    // -----------------------------------------------------------------
-    //  Estado de los vumeters (inercia analógica)
-    // -----------------------------------------------------------------
+    // Estado inercial de los VUMeters
     float vuLeft = 0.0f;
     float vuRight = 0.0f;
 
