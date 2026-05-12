@@ -1,6 +1,7 @@
 # JUCE / C++ Ignores
 Builds/
 JuceLibraryCode/
+build/
 .vs/
 *.user
 *.suo

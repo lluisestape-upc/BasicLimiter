@@ -1,12 +1,12 @@
 # ESP-L1 — Brick Wall Limiter
 
-A VST3 and Standalone audio plugin developed in C++17 using the **JUCE Framework**. Implements a time-domain brick-wall limiter with a dual real-time analyzer: scrolling oscilloscope and frequency spectrum.
+![Build](https://github.com/lluisestape-upc/BasicLimiter/actions/workflows/build.yml/badge.svg)
+
+A VST3 / AU audio plugin developed in C++17 using the **JUCE Framework**. Implements a time-domain brick-wall limiter with a dual real-time analyzer: scrolling oscilloscope and frequency spectrum.
 
 ![ESP-L1](screenshot.png)
 
 ## ⚙️ DSP Architecture
-
-The audio processing is built around a standard time-domain envelope follower and a hard-ceiling stage, ensuring absolute peak containment.
 
 * **Detection & Envelope:** Linked-stereo peak detection (`std::max` across channels per sample). Instantaneous attack (0 ms) with exponential release. The release coefficient is calculated from the host sample rate so timing stays consistent regardless of session settings.
 * **Gain Reduction:** `GR = thresholdLinear / envelopeState` whenever the envelope exceeds the threshold.
@@ -14,9 +14,9 @@ The audio processing is built around a standard time-domain envelope follower an
 
 ## 📊 Visualizers
 
-* **Oscilloscope:** 131 072-sample ring buffer (~3 s at 44.1 kHz). Drawn as min/max bars per pixel for accurate peak representation. PRE (pre-limiter) and POST (post-limiter) signals overlaid. Threshold lines shown as dashed overlays. FREEZE button locks the display.
-* **Spectrum Analyzer:** 2048-point Hann-windowed FFT on both pre- and post-limiter signals. Logarithmic frequency axis (20 Hz – 20 kHz). PRE curve filled, POST curve solid line.
-* **VU + GR Meters:** Stereo VU meter (L/R) with analogue-style decay; GR meter shows instantaneous gain reduction in dB.
+* **Oscilloscope:** 131 072-sample ring buffer (~3 s at 44.1 kHz). Drawn as min/max bars per pixel for accurate peak representation. PRE and POST signals overlaid. Threshold shown as dashed overlay. FREEZE button locks the display.
+* **Spectrum Analyzer:** 2048-point Hann-windowed FFT on both pre- and post-limiter signals. Logarithmic frequency axis (20 Hz – 20 kHz).
+* **VU + GR Meters:** Stereo VU meter with analogue-style decay; GR meter shows instantaneous gain reduction in dB.
 
 ## 🎨 Themes
 
@@ -38,15 +38,36 @@ Three vintage-analog themes, cycled with the THEME button:
 
 ## 🚀 Build
 
-**Requirements:** JUCE Framework, Visual Studio 2022, Windows.
+### Option A — CMake (Windows & macOS, recommended)
 
-1. Clone the repo.
-2. Open `BasicLimiter.jucer` in Projucer and verify your local JUCE module paths.
-3. Export to Visual Studio 2022.
-4. Open `Builds/VisualStudio2022/BasicLimiter.sln` and build the `BasicLimiter_VST3` target (Release or Debug).
-5. Copy the `.vst3` from the output folder to your DAW's VST3 directory.
+**Requirements:** CMake ≥ 3.22, a C++17 compiler. JUCE is downloaded automatically.
 
-> If the `.jucer` file is modified (new files, metadata changes), re-export via Projucer before building.
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release --parallel
+```
+
+For a macOS universal binary (Apple Silicon + Intel):
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+cmake --build build --config Release --parallel
+```
+
+Artifacts land in `build/BasicLimiter_artefacts/Release/`:
+- `VST3/ESP-L1.vst3` — Windows & macOS
+- `AU/ESP-L1.component` — macOS only (Logic Pro, GarageBand, etc.)
+
+### Option B — Projucer / Visual Studio 2022 (Windows)
+
+1. Open `BasicLimiter.jucer` in Projucer and verify your local JUCE module paths.
+2. Export to Visual Studio 2022.
+3. Open `Builds/VisualStudio2022/BasicLimiter.sln` and build the `BasicLimiter_VST3` target.
+4. Copy the `.vst3` to your DAW's VST3 folder.
+
+### Installing on macOS
+
+- **VST3:** copy `ESP-L1.vst3` to `~/Library/Audio/Plug-Ins/VST3/`
+- **AU:** copy `ESP-L1.component` to `~/Library/Audio/Plug-Ins/Components/`
 
 ## 📝 License
 
