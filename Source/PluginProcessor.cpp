@@ -1,140 +1,204 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+// =============================================================================
+//  Constructor
+// =============================================================================
 SpectrumAnalyzerAudioProcessor::SpectrumAnalyzerAudioProcessor()
     : AudioProcessor(BusesProperties()
         .withInput("Input", juce::AudioChannelSet::stereo(), true)
         .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+    forwardFFT(fftOrder),
+    window(fftSize, juce::dsp::WindowingFunction<float>::hann),
     apvts(*this, nullptr, "Parameters", createParameterLayout())
+    
 {
 }
 
 SpectrumAnalyzerAudioProcessor::~SpectrumAnalyzerAudioProcessor() {}
 
+// =============================================================================
+//  Layout de par�metros (llamado UNA sola vez desde el constructor de apvts)
+// =============================================================================
 juce::AudioProcessorValueTreeState::ParameterLayout
 SpectrumAnalyzerAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
+    // Threshold: umbral a partir del cual el limiter act�a
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "threshold", "Threshold",
         juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), 0.0f));
 
+    // Release: tiempo (ms) que tarda la GR en volver a cero tras el pico
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "release", "Release",
         juce::NormalisableRange<float>(10.0f, 1000.0f, 1.0f, 0.5f), 100.0f));
+    // El skew 0.5 hace que el knob no sea lineal: m�s resoluci�n en valores bajos
 
+    // Output Gain: ajuste de nivel tras el limiting
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "outputGain", "Output Gain",
         juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f), 0.0f));
 
-    // Parámetro de Ceiling: Brickwall max output
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "ceiling", "Ceiling",
-        juce::NormalisableRange<float>(-12.0f, 0.0f, 0.1f), -0.1f));
-
     return { params.begin(), params.end() };
 }
 
+// =============================================================================
+//  prepareToPlay � Se llama cuando el DAW arranca o cambia la configuraci�n
+// =============================================================================
 void SpectrumAnalyzerAudioProcessor::prepareToPlay(double sampleRate, int /*samplesPerBlock*/)
 {
     currentSampleRate = sampleRate;
     envelopeState = 0.0f;
 
-    // Downsampling para la visualización (reducimos Hz de audio a Hz de píxel)
-    samplesPerPixel = static_cast<int>(sampleRate / 100.0);
-    sampleCount = 0;
-    currentMaxInput = 0.0f;
-    currentMinGR = 1.0f;
+    std::fill(std::begin(fifo), std::end(fifo), 0.0f);
+    fifoPost.fill(0.0f);
+    fifoIndex = 0;
+    fifoIndexPost = 0;
+    nextFFTBlockReady = false;
+    nextFFTBlockReadyPost.store(false);
 
-    inputHistory.fill(0.0f);
-    grHistory.fill(1.0f);
-    historyWriteIndex.store(0);
+    waveformPre.fill(0.0f);
+    waveformPost.fill(0.0f);
+    waveformWritePos.store(0);
 }
 
 void SpectrumAnalyzerAudioProcessor::releaseResources() {}
 
-void SpectrumAnalyzerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+// =============================================================================
+//  FIFO Pre-limiter (se�al de ENTRADA al analizador)
+// =============================================================================
+void SpectrumAnalyzerAudioProcessor::pushNextSampleIntoFifo(float sample) noexcept
+{
+    if (fifoIndex == fftSize)
+    {
+        if (!nextFFTBlockReady)
+        {
+            std::memcpy(fftData, fifo, sizeof(fifo));
+            nextFFTBlockReady = true;
+        }
+        fifoIndex = 0;
+    }
+    fifo[fifoIndex++] = sample;
+}
+
+// =============================================================================
+//  FIFO Post-limiter (se�al de SALIDA tras el DSP)
+//  Mismo mecanismo que el pre, pero con variables independientes para que
+//  ambos espectros no interfieran entre s�.
+// =============================================================================
+void SpectrumAnalyzerAudioProcessor::pushNextSampleIntoFifoPost(float sample) noexcept
+{
+    if (fifoIndexPost == fftSize)
+    {
+        if (!nextFFTBlockReadyPost.load())
+        {
+            // Copia solo los primeros fftSize floats; la segunda mitad de fftDataPost
+            // act�a como buffer scratch para la FFT y ya fue inicializada a 0.
+            std::memcpy(fftDataPost.data(), fifoPost.data(),
+                fifoPost.size() * sizeof(float));
+            nextFFTBlockReadyPost.store(true);
+        }
+        fifoIndexPost = 0;
+    }
+    fifoPost[fifoIndexPost++] = sample;
+}
+
+// =============================================================================
+//  processBlock � El coraz�n del plugin
+// =============================================================================
+void SpectrumAnalyzerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
+    juce::MidiBuffer& /*midiMessages*/)
 {
     juce::ScopedNoDenormals noDenormals;
 
     const int numSamples = buffer.getNumSamples();
     const int numChannels = buffer.getNumChannels();
 
-    // Medición RMS Pre-limiter para los vumetros
+    // ------------------------------------------------------------------
+    //  1. RMS para los vumeters (pre-limiter)
+    //     getRMSLevel es m�s apropiado que getMagnitude (peak) para un VU meter
+    // ------------------------------------------------------------------
     rmsLeft = buffer.getRMSLevel(0, 0, numSamples);
     rmsRight = (numChannels > 1) ? buffer.getRMSLevel(1, 0, numSamples) : rmsLeft;
 
-    // Obtener parámetros
+    // ------------------------------------------------------------------
+    //  2. Alimentar el FFT de ENTRADA (antes de tocar el audio)
+    // ------------------------------------------------------------------
+    const auto* leftIn = buffer.getReadPointer(0);
+    for (int i = 0; i < numSamples; ++i)
+        pushNextSampleIntoFifo(leftIn[i]);
+
+    // Capture pre-limiter waveform (before any gain change)
+    const int waveBase = waveformWritePos.load();
+    for (int s = 0; s < numSamples; ++s)
+        waveformPre[(waveBase + s) & (waveformSize - 1)] = leftIn[s];
+
+    // ------------------------------------------------------------------
+    //  3. Leer par�metros del APVTS
+    //     getRawParameterValue devuelve un std::atomic<float>, .load() es thread-safe
+    // ------------------------------------------------------------------
     const float thresholdDb = apvts.getRawParameterValue("threshold")->load();
     const float releaseMs = apvts.getRawParameterValue("release")->load();
     const float outputGainDb = apvts.getRawParameterValue("outputGain")->load();
-    const float ceilingDb = apvts.getRawParameterValue("ceiling")->load();
 
     const float thresholdLinear = juce::Decibels::decibelsToGain(thresholdDb);
     const float outputGain = juce::Decibels::decibelsToGain(outputGainDb);
-    const float ceilingLinear = juce::Decibels::decibelsToGain(ceilingDb);
 
-    // Coeficiente de release exponencial adaptado al SR
-    const float releaseCoeff = std::exp(-1.0f / (static_cast<float>(currentSampleRate) * (releaseMs / 1000.0f)));
+    // Coeficiente de release: decaimiento exponencial adaptado al sample rate.
+    // F�rmula: e^(-1 / (SR * T_release_en_segundos))
+    // A 44100 Hz con 100ms: coeff =aprox 0.9997 (decae muy suavemente)
+    const float releaseCoeff = std::exp(
+        -1.0f / (static_cast<float>(currentSampleRate) * (releaseMs / 1000.0f)));
 
-    float currentGR = 1.0f;
-    bool frozen = isFrozen.load(std::memory_order_relaxed);
+    // ------------------------------------------------------------------
+    //  4. Algoritmo de Limiting � muestra a muestra
+    //     Por qu� muestra a muestra y no por bloque:
+    //     El limiter necesita reaccionar instant�neamente a cada pico.
+    //     Si proces�ramos por bloques, podr�amos clipear antes de actuar.
+    // ------------------------------------------------------------------
+    float currentGR = 1.0f; // Ganancia de reducci�n del �ltimo sample (para la UI)
 
     for (int s = 0; s < numSamples; ++s)
     {
-        // 1. Detección de picos (Linked Stereo)
+        // Detectar el pico absoluto entre todos los canales
         float peak = 0.0f;
         for (int ch = 0; ch < numChannels; ++ch)
             peak = std::max(peak, std::abs(buffer.getSample(ch, s)));
 
-        // 2. Envolvente (Ataque 0ms, Release Exponencial)
+        // Seguidor de envolvente:
+        // - Sube instant�neamente al pico (attack = 0, comportamiento de limiter)
+        // - Decae exponencialmente con el coeficiente de release
         envelopeState = std::max(peak, envelopeState * releaseCoeff);
 
-        // 3. Cálculo de GR
+        // Calcular ganancia de reducci�n necesaria
+        // Si la envolvente supera el umbral, reducimos proporcionalmente
         currentGR = 1.0f;
         if (envelopeState > thresholdLinear && envelopeState > 0.0f)
             currentGR = thresholdLinear / envelopeState;
 
-        // 4. Aplicar Proceso y Ceiling (Brickwall Clipper final)
+        // Aplicar GR + Output Gain a todos los canales (linked stereo)
         for (int ch = 0; ch < numChannels; ++ch)
-        {
-            float processed = buffer.getSample(ch, s) * currentGR * outputGain;
-
-            // Hard-clipper de seguridad absoluto
-            processed = juce::jlimit(-ceilingLinear, ceilingLinear, processed);
-
-            buffer.setSample(ch, s, processed);
-        }
-
-        // 5. Lógica de Downsampling para el Visualizador (Lock-free)
-        if (!frozen)
-        {
-            currentMaxInput = std::max(currentMaxInput, peak);
-            currentMinGR = std::min(currentMinGR, currentGR);
-
-            if (++sampleCount >= samplesPerPixel)
-            {
-                int idx = historyWriteIndex.load(std::memory_order_relaxed);
-                inputHistory[idx] = currentMaxInput;
-                grHistory[idx] = currentMinGR;
-
-                // Avanzar índice circularmente
-                idx = (idx + 1) % visualizerBufferSize;
-                historyWriteIndex.store(idx, std::memory_order_release);
-
-                // Reiniciar acumuladores para el siguiente píxel
-                sampleCount = 0;
-                currentMaxInput = 0.0f;
-                currentMinGR = 1.0f;
-            }
-        }
+            buffer.setSample(ch, s, buffer.getSample(ch, s) * currentGR * outputGain);
     }
 
-    // Actualizar GR Db para la UI (valor del último sample procesado)
-    gainReductionDb.store(juce::Decibels::gainToDecibels(currentGR), std::memory_order_relaxed);
+    // Actualizar el medidor de GR para la UI (valor del �ltimo sample del bloque)
+    gainReductionDb.store(juce::Decibels::gainToDecibels(currentGR));
+
+    // ------------------------------------------------------------------
+    //  5. Alimentar el FFT de SALIDA + capturar waveform post-limiter
+    // ------------------------------------------------------------------
+    const auto* leftOut = buffer.getReadPointer(0);
+    for (int i = 0; i < numSamples; ++i)
+    {
+        pushNextSampleIntoFifoPost(leftOut[i]);
+        waveformPost[(waveBase + i) & (waveformSize - 1)] = leftOut[i];
+    }
+    waveformWritePos.store((waveBase + numSamples) & (waveformSize - 1));
 }
 
+// =============================================================================
 juce::AudioProcessorEditor* SpectrumAnalyzerAudioProcessor::createEditor()
 {
     return new SpectrumAnalyzerAudioProcessorEditor(*this);
@@ -143,18 +207,4 @@ juce::AudioProcessorEditor* SpectrumAnalyzerAudioProcessor::createEditor()
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new SpectrumAnalyzerAudioProcessor();
-}
-
-void SpectrumAnalyzerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
-{
-    auto state = apvts.copyState();
-    std::unique_ptr<juce::XmlElement> xml(state.createXml());
-    copyXmlToBinary(*xml, destData);
-}
-
-void SpectrumAnalyzerAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
-{
-    std::unique_ptr<juce::XmlElement> xml(getXmlFromBinary(data, sizeInBytes));
-    if (xml && xml->hasTagName(apvts.state.getType()))
-        apvts.replaceState(juce::ValueTree::fromXml(*xml));
 }
