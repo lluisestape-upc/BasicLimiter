@@ -1,54 +1,53 @@
-# Basic Limiter
+# ESP-L1 — Brick Wall Limiter
 
-A VST3 and Standalone audio plugin developed in C++17 using the **JUCE Framework**. This project implements a time-domain brickwall limiter with a lock-free, real-time oscilloscope visualizer.
+A VST3 and Standalone audio plugin developed in C++17 using the **JUCE Framework**. Implements a time-domain brick-wall limiter with a dual real-time analyzer: scrolling oscilloscope and frequency spectrum.
 
-<img width="1439" height="828" alt="image" src="https://github.com/user-attachments/assets/be4884c6-91d7-43df-8d7e-588da3cecdcb" />
+![ESP-L1](screenshot.png)
 
-## ⚙️ DSP Architecture & Implementation
+## ⚙️ DSP Architecture
 
-The audio processing is built around a standard time-domain envelope follower and a hard-clipping stage, ensuring absolute peak containment.
+The audio processing is built around a standard time-domain envelope follower and a hard-ceiling stage, ensuring absolute peak containment.
 
-* **Detection & Envelope:** * Uses a Linked-Stereo peak detection algorithm (`std::max` across channels per sample).
-  * The envelope features an instantaneous attack (0 ms) and an exponential release. The release coefficient is dynamically calculated based on the host's current sample rate to ensure consistent timing regardless of session settings.
-* **Gain Reduction:** * Gain reduction is calculated inversely to the envelope once it exceeds the linear threshold (`thresholdLinear / envelopeState`).
-* **Brickwall Ceiling:** * After the gain reduction and output gain are applied, the signal passes through a hard-clipping stage using `juce::jlimit`. The absolute maximum output is clamped to the linear equivalent of the `Ceiling` parameter, ensuring the signal never exceeds this mathematical boundary.
+* **Detection & Envelope:** Linked-stereo peak detection (`std::max` across channels per sample). Instantaneous attack (0 ms) with exponential release. The release coefficient is calculated from the host sample rate so timing stays consistent regardless of session settings.
+* **Gain Reduction:** `GR = thresholdLinear / envelopeState` whenever the envelope exceeds the threshold.
+* **Output Gain:** Post-reduction makeup gain applied before the output stage.
 
-## 📊 Visualizer & Thread Synchronization
+## 📊 Visualizers
 
-To transfer high-frequency audio data to the 60Hz GUI without blocking the audio thread or allocating memory, the plugin uses a lock-free downsampling approach:
+* **Oscilloscope:** 131 072-sample ring buffer (~3 s at 44.1 kHz). Drawn as min/max bars per pixel for accurate peak representation. PRE (pre-limiter) and POST (post-limiter) signals overlaid. Threshold lines shown as dashed overlays. FREEZE button locks the display.
+* **Spectrum Analyzer:** 2048-point Hann-windowed FFT on both pre- and post-limiter signals. Logarithmic frequency axis (20 Hz – 20 kHz). PRE curve filled, POST curve solid line.
+* **VU + GR Meters:** Stereo VU meter (L/R) with analogue-style decay; GR meter shows instantaneous gain reduction in dB.
 
-* **Downsampling:** The audio thread calculates how many audio samples correspond to a single UI pixel (`sampleRate / 100.0`). It accumulates the maximum input peak and minimum gain reduction within that window.
-* **Circular Buffer:** Once a "pixel window" is complete, the data is pushed into fixed-size `std::array` buffers (`inputHistory` and `grHistory`). An `std::atomic<int>` index is incremented and wrapped around, ensuring thread-safe reads from the GUI timer callback.
-* **Rendering:** The UI reads backwards from the current atomic write index to draw the historical waveform. The waveform is mirrored symmetrically on the Y-axis for standard oscilloscope aesthetics. VU meters feature custom decay logic to simulate analogue inertia.
+## 🎨 Themes
+
+Three vintage-analog themes, cycled with the THEME button:
+
+| Theme | Style |
+|-------|-------|
+| AMBER | Warm tube, amber/gold palette |
+| PHOSPHOR | Green CRT phosphor monitor |
+| STEEL | Dark rack-unit, steel blue |
 
 ## 🎛️ Parameters
 
-* **Threshold (dB):** The level at which the gain reduction envelope engages.
-* **Release (ms):** The exponential decay time for the gain reduction envelope.
-* **Output Gain (dB):** Linear makeup gain applied post-reduction, pre-ceiling.
-* **Ceiling (dB):** The absolute maximum output peak limit (Hard-Clipper).
-* **Freeze (Toggle):** Stops the atomic write-index progression, freezing the visualizer state for inspection.
+| Parameter | Range | Default | Description |
+|-----------|-------|---------|-------------|
+| Threshold | -60 → 0 dB | 0 dB | Level above which GR engages |
+| Release | 10 → 1000 ms | 100 ms | Exponential decay time (log-scaled knob) |
+| Out Gain | -12 → +12 dB | 0 dB | Post-limiter makeup gain |
 
-## 🚀 Build Instructions
+## 🚀 Build
 
-This repository is configured for **Windows** and **Visual Studio 2022**. Compiled binaries (`.vst3`, `.exe`, etc.) are explicitly ignored via `.gitignore`.
+**Requirements:** JUCE Framework, Visual Studio 2022, Windows.
 
-### Prerequisites:
-1.  [JUCE Framework](https://juce.com/) installed locally.
-2.  **Visual Studio 2022** with "Desktop development with C++" workload installed.
+1. Clone the repo.
+2. Open `BasicLimiter.jucer` in Projucer and verify your local JUCE module paths.
+3. Export to Visual Studio 2022.
+4. Open `Builds/VisualStudio2022/BasicLimiter.sln` and build the `BasicLimiter_VST3` target (Release or Debug).
+5. Copy the `.vst3` from the output folder to your DAW's VST3 directory.
 
-### Steps:
-1.  Clone this repository:
-    ```bash
-    git clone [https://github.com/lluisestape-upc/BasicLimiter.git](https://github.com/lluisestape-upc/BasicLimiter.git)
-    ```
-2.  Open the `BasicLimiter.jucer` file using the **Projucer** application.
-3.  Ensure your JUCE module paths are correctly configured for your local machine within the Projucer.
-4.  Click the **Visual Studio 2022** icon in the Projucer to generate the `.sln` and `.vcxproj` files and open the IDE.
-5.  Set your build configuration to **Release** (for optimized DSP performance) or **Debug** (for development).
-6.  Build the solution (`Ctrl + Shift + B`).
-7.  The output files will be located in `Builds/VisualStudio2022/x64/Release/VST3/`.
+> If the `.jucer` file is modified (new files, metadata changes), re-export via Projucer before building.
 
 ## 📝 License
 
-This project is open-source. Feel free to use it as a reference for JUCE DSP development and lock-free GUI synchronization.
+Open-source — free to use as a reference for JUCE DSP and lock-free GUI synchronization.
