@@ -72,3 +72,12 @@ Artifacts land in `build/BasicLimiter_artefacts/Release/`:
 ## 📝 License
 
 Open-source — free to use as a reference for JUCE DSP and lock-free GUI synchronization.
+---
+
+## 🔗 Download & more plugins
+
+This plugin is part of the **ESP free plugin collection**.
+Download it and find more free audio plugins at:
+
+👉 **[esp-plugin-store.vercel.app](https://esp-plugin-store.vercel.app)**
+
