@@ -71,7 +71,10 @@ Artifacts land in `build/BasicLimiter_artefacts/Release/`:
 
 ## License
 
-Open-source -- free to use as a reference for JUCE DSP and lock-free GUI synchronization.
+GPL v3 -- see [LICENSE](LICENSE). This plugin links the JUCE modules, which are
+licensed under AGPLv3, and the VST3 SDK under its GPLv3 option.
+
+Free to use as a reference for JUCE DSP and lock-free GUI synchronization.
 
 ---
 
