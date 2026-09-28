@@ -64,6 +64,8 @@ public:
     void drawButtonText(juce::Graphics&, juce::TextButton&,
         bool isOver, bool isDown) override;
 
+    void drawLabel(juce::Graphics&, juce::Label&) override;
+
 private:
     const Theme* t = nullptr;   // non-owning; set via setTheme()
 };

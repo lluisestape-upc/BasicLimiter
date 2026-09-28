@@ -59,9 +59,9 @@ Artifacts land in `build/BasicLimiter_artefacts/Release/`:
 
 ### Option B -- Projucer / Visual Studio 2022 (Windows)
 
-1. Open `BasicLimiter.jucer` in Projucer and verify your local JUCE module paths.
+1. Open `ESP-L1.jucer` in Projucer and verify your local JUCE module paths.
 2. Export to Visual Studio 2022.
-3. Open `Builds/VisualStudio2022/BasicLimiter.sln` and build the `BasicLimiter_VST3` target.
+3. Open `Builds/VisualStudio2022/ESP-L1.sln` and build the `ESP-L1_VST3` target.
 4. Copy the `.vst3` to your DAW's VST3 folder.
 
 ### Installing on macOS

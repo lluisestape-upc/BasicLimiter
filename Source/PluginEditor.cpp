@@ -214,6 +214,19 @@ void VintageLookAndFeel::drawButtonText(
     g.drawText(button.getButtonText(), button.getLocalBounds(), juce::Justification::centred);
 }
 
+void VintageLookAndFeel::drawLabel(juce::Graphics& g, juce::Label& label)
+{
+    if (label.isBeingEdited()) return;  // TextEditor draws itself when active
+
+    const float alpha = label.isEnabled() ? 1.0f : 0.5f;
+    g.setFont(getLabelFont(label));
+    g.setColour(label.findColour(juce::Label::textColourId).withMultipliedAlpha(alpha));
+    g.drawFittedText(label.getText(),
+                     getLabelBorderSize(label).subtractedFrom(label.getLocalBounds()),
+                     label.getJustificationType(), 1, 1.0f);
+    // No background fill, no outline rect.
+}
+
 // =============================================================================
 //  Constructor / Destructor
 // =============================================================================
